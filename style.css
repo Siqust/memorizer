@@ -121,6 +121,20 @@ details[open] summary { margin-bottom: 18px; }
 .feedback.bad { color: var(--red); }
 .feedback .rel { display: block; color: var(--muted); font-weight: 600; font-size: 13px; margin-top: 4px; }
 
+/* Впиши термин */
+.definition { font-size: 22px; font-weight: 600; line-height: 1.45; margin: 0 0 28px; }
+.term-input-wrap { margin-bottom: 20px; }
+.term-input { width: 100%; height: 60px; border: 2px solid var(--line); background: var(--soft); border-radius: 6px; padding: 0 18px; font: inherit; font-size: 20px; font-weight: 700; color: var(--text); outline: none; transition: border-color .15s, background .15s; }
+.term-input:focus { border-color: var(--blue); background: #fff; }
+.term-input.ok { border-color: var(--green); background: var(--green-soft); }
+.term-input.bad { border-color: var(--red); background: var(--red-soft); color: #9b2c2f; text-decoration: line-through; }
+.term-answer { color: var(--text); font-weight: 800; }
+.group-title { font-size: 15px; font-weight: 800; color: #4d525e; margin: 34px 0 16px; text-transform: uppercase; letter-spacing: .4px; }
+.group-title:first-of-type { margin-top: 0; }
+dl.terms { margin: 0; display: grid; grid-template-columns: minmax(160px, 260px) 1fr; gap: 10px 24px; font-size: 14px; }
+dl.terms dt { font-weight: 800; }
+dl.terms dd { margin: 0; color: #4d525e; font-weight: 500; }
+
 .side { padding: 36px 40px 40px; }
 .mascot { display: block; width: 230px; height: 190px; margin: 0 auto 24px; }
 .timer-row { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
@@ -190,4 +204,9 @@ details[open] summary { margin-bottom: 18px; }
   .answer-row .btn { width: 100%; height: 54px; font-size: 15px; }
   .feedback { margin: 0; text-align: center; }
   .result .big { font-size: 48px; }
+  .definition { font-size: 18px; margin-bottom: 20px; }
+  .term-input { height: 56px; font-size: 18px; }
+  .answer-row .btn-soft { order: 2; }
+  dl.terms { grid-template-columns: 1fr; gap: 2px; }
+  dl.terms dd { margin-bottom: 12px; }
 }

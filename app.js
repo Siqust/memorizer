@@ -22,7 +22,8 @@ const fmtDate = ts => new Date(ts).toLocaleString('ru-RU', { day: 'numeric', mon
 const plural = (n, a, b, c) => { const m10 = n % 10, m100 = n % 100; return m10 === 1 && m100 !== 11 ? a : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? b : c; };
 const quizById = id => QUIZZES.find(q => q.id === id);
 
-/* Разбор шаблона "оп[е]кун" → сегменты */
+/* ================= Типы квизов ================= */
+// Вставь букву
 function segments(pattern) {
   const out = []; const re = /\[([^\]]+)\]/g; let last = 0, m;
   while ((m = re.exec(pattern))) {
@@ -36,8 +37,37 @@ function segments(pattern) {
 const PAIRS = { 'а': ['а', 'о'], 'о': ['а', 'о'], 'е': ['е', 'и'], 'и': ['е', 'и'], 'я': ['е', 'я'] };
 const optionsFor = letter => PAIRS[letter] || [letter];
 const pretty = pattern => esc(pattern).replace(/\[([^\]]+)\]/g, '<b>$1</b>');
-// латинская раскладка → русская буква (если забыл переключить)
 const LAT = { f: 'а', j: 'о', t: 'е', b: 'и', z: 'я' };
+
+// Впиши термин: мягкая проверка (регистр, ё/е, кавычки, дефисы, опечатки)
+const norm = s => s.toLowerCase().replace(/ё/g, 'е').replace(/[«»"'„“”.,!?()]/g, ' ').replace(/[-–—]/g, ' ').replace(/\s+/g, ' ').trim();
+function lev(a, b) {
+  if (a === b) return 0;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+const allowedTypos = len => len <= 4 ? 0 : len <= 7 ? 1 : 2;
+function matchTerm(input, answers) {
+  const x = norm(input);
+  if (!x) return null;
+  let best = null;
+  for (const a of answers) {
+    const y = norm(a), d = lev(x, y);
+    if (d === 0) return 'exact';
+    if (d <= allowedTypos(y.length)) best = 'typo';
+  }
+  return best;
+}
+
+const TYPE_INFO = {
+  letter: { tag: 'Вставь букву', unit: ['слово', 'слова', 'слов'] },
+  input:  { tag: 'Впиши термин', unit: ['термин', 'термина', 'терминов'] },
+};
 
 /* ================= Роутинг ================= */
 let cleanup = null;
@@ -54,44 +84,44 @@ window.addEventListener('hashchange', route);
 const go = hash => { if (location.hash === hash) route(); else location.hash = hash; };
 
 /* ================= Главная ================= */
+function quizCard(q) {
+  const s = store.quiz(q.id), info = TYPE_INFO[q.type];
+  const best = s.attempts.length ? Math.max(...s.attempts.map(a => a.score)) : null;
+  const cur = s.current;
+  const pct = cur ? Math.round(cur.done.length / q.items.length * 100) : best != null ? Math.round(best / q.items.length * 100) : 0;
+  const status = cur ? `В процессе · ${pct}%` : best != null ? `Лучший: ${best} из ${q.items.length}` : 'Ещё не проходили';
+  return `
+    <button class="quiz-card" data-go="#/quiz/${q.id}">
+      <span class="tag">${info.tag}</span>
+      <h2>${esc(q.title)}</h2>
+      <p class="sub">${esc(q.subtitle)}</p>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="meta"><span>${q.items.length} ${plural(q.items.length, ...info.unit)}</span><span>${status}</span></div>
+    </button>`;
+}
 function renderHome() {
   document.title = 'Memorizer';
-  const cards = QUIZZES.map(q => {
-    const s = store.quiz(q.id);
-    const best = s.attempts.length ? Math.max(...s.attempts.map(a => a.score)) : null;
-    const cur = s.current;
-    const pct = cur ? Math.round(cur.done.length / q.items.length * 100) : best != null ? Math.round(best / q.items.length * 100) : 0;
-    const status = cur ? `В процессе · ${pct}%` : best != null ? `Лучший: ${best} из ${q.items.length}` : 'Ещё не проходили';
-    return `
-      <button class="quiz-card" data-go="#/quiz/${q.id}">
-        <span class="tag">Вставь букву</span>
-        <h2>${esc(q.title)}</h2>
-        <p class="sub">${esc(q.subtitle)}</p>
-        <div class="bar"><i style="width:${pct}%"></i></div>
-        <div class="meta"><span>${q.items.length} ${plural(q.items.length, 'слово', 'слова', 'слов')}</span><span>${status}</span></div>
-      </button>`;
-  }).join('');
+  const groups = [
+    ['Русский язык · словарные слова', QUIZZES.filter(q => q.type === 'letter')],
+    ['История · термины', QUIZZES.filter(q => q.type === 'input')],
+  ].filter(([, qs]) => qs.length);
   $app.innerHTML = `
     <div class="topbar"><h1>Memorizer</h1></div>
-    <div class="grid">
-      ${cards}
-      <div class="quiz-card soon">
-        <span class="tag">Скоро</span>
-        <h2>Даты и факты</h2>
-        <p class="sub">Вопрос и поле для ввода ответа</p>
-      </div>
-    </div>`;
+    ${groups.map(([title, qs]) => `<h2 class="group-title">${title}</h2><div class="grid">${qs.map(quizCard).join('')}</div>`).join('')}`;
 }
 
 /* ================= Страница квиза ================= */
 function renderDetail(q) {
   document.title = `${q.title} — Memorizer`;
-  const s = store.quiz(q.id);
+  const s = store.quiz(q.id), info = TYPE_INFO[q.type];
   const n = q.items.length;
   const best = s.attempts.length ? Math.max(...s.attempts.map(a => a.score)) : null;
   const cur = s.current;
   const rows = s.attempts.slice().reverse().map(a => `
     <tr><td>${fmtDate(a.date)}</td><td class="score">${a.score} / ${a.total}</td><td>${fmtDur(a.seconds)}</td><td>${a.rounds}</td></tr>`).join('');
+  const list = q.type === 'input'
+    ? `<dl class="terms">${q.items.map(i => `<dt>${esc(i.term)}</dt><dd>${esc(i.def)}</dd>`).join('')}</dl>`
+    : `<ul class="words">${q.items.map(i => `<li>${pretty(i.pattern)}</li>`).join('')}</ul>`;
 
   $app.innerHTML = `
     <a class="back" href="#/">← Все квизы</a>
@@ -99,7 +129,7 @@ function renderDetail(q) {
     <div class="detail">
       <div class="card">
         <div class="stats">
-          <div class="stat"><div class="k">Слов</div><div class="v">${n}</div></div>
+          <div class="stat"><div class="k">${info.unit[2][0].toUpperCase() + info.unit[2].slice(1)}</div><div class="v">${n}</div></div>
           <div class="stat"><div class="k">Попыток</div><div class="v">${s.attempts.length}</div></div>
           <div class="stat"><div class="k">Лучший результат</div><div class="v">${best != null ? `${best} <small>из ${n}</small>` : '—'}</div></div>
           ${cur ? `<div class="stat"><div class="k">Текущая попытка</div><div class="v">${cur.done.length} <small>из ${n}</small></div></div>` : ''}
@@ -110,7 +140,7 @@ function renderDetail(q) {
                <button class="btn btn-soft" data-restart>Пройти заново</button>`
             : `<button class="btn btn-primary" data-restart>${s.attempts.length ? 'Пройти заново' : 'Начать'}</button>`}
         </div>
-        <p class="empty" style="margin:22px 0 0">Неверные ответы возвращаются в конец в случайном порядке, пока не ответишь на все. В счёт идут только слова, отвеченные верно с первого раза.</p>
+        <p class="empty" style="margin:22px 0 0">${q.type === 'input' ? 'Показывается определение — впишите термин. Регистр, ё/е и небольшие опечатки не считаются ошибкой. ' : ''}Неверные ответы возвращаются в конец в случайном порядке, пока не ответишь на все. В счёт идут только ответы, верные с первого раза.</p>
       </div>
       <div class="card">
         <h3 class="section-title">Прошлые попытки</h3>
@@ -118,8 +148,8 @@ function renderDetail(q) {
       </div>
       <div class="card" style="grid-column:1/-1">
         <details>
-          <summary>Список слов (${n})</summary>
-          <ul class="words">${q.items.map(i => `<li>${pretty(i.pattern)}</li>`).join('')}</ul>
+          <summary>Список (${n})</summary>
+          ${list}
         </details>
       </div>
     </div>`;
@@ -140,13 +170,12 @@ function renderPlay(q) {
   if (!s.current) { s.current = newSession(q); store.save(); }
   const st = s.current;
   const byId = Object.fromEntries(q.items.map(i => [i.id, i]));
-  // если список слов изменился — выкинуть несуществующие id
   st.queue = st.queue.filter(id => byId[id]);
   st.retry = st.retry.filter(id => byId[id]);
   if (!st.queue.length && !st.retry.length) return finish();
 
   document.title = `${q.title} — Memorizer`;
-  let item, segs, fills, active, checked, paused = false;
+  let item, taskNo = 1, checked = null, paused = false, autoNext = null;
 
   $app.innerHTML = `
     <div class="topbar"><h1>Квиз «${esc(q.title)}»</h1><button class="link" data-exit>Завершить</button></div>
@@ -180,92 +209,23 @@ function renderPlay(q) {
     document.getElementById('errs').textContent = st.wrong.length;
     document.getElementById('left').textContent = st.queue.length + st.retry.length;
   };
+  const head = extra => `
+    <div class="task-head">
+      <b>Задача #${taskNo}</b>
+      ${extra ? `<span class="st">${extra}</span>` : ''}
+      ${st.round > 1 ? `<span class="round-pill">Повтор ошибок · круг ${st.round}</span>` : ''}
+    </div>`;
 
-  function loadItem() {
-    item = byId[st.queue[0]];
-    segs = segments(item.pattern);
-    fills = segs.map(() => null);
-    active = segs.findIndex(x => x.gap);
-    checked = null;
-    drawTask();
-    updateSide();
-  }
-
-  function drawTask() {
-    const gapIdx = segs.map((x, i) => x.gap ? i : -1).filter(i => i >= 0);
-    const word = segs.map((x, i) => {
-      if (!x.gap) return esc(x.text);
-      let cls = 'gap', inner = fills[i] || '_';
-      if (checked) {
-        const ok = fills[i] === x.gap;
-        cls += ok ? ' ok' : ' bad';
-        if (!ok) inner = `${esc(fills[i])}<span class="fix">${esc(x.gap)}</span>`;
-      } else {
-        if (!fills[i]) cls += ' empty';
-        if (i === active) cls += ' active';
-      }
-      return `<span class="${cls}" data-gap="${i}">${inner}</span>`;
-    }).join('');
-    const opts = active >= 0 ? optionsFor(segs[active].gap) : [];
-    const allFilled = gapIdx.every(i => fills[i]);
-    const isRetry = st.round > 1;
-
-    let bottom;
-    if (checked) {
-      const rel = item.related ? `<span class="rel">${esc(item.related)}</span>` : '';
-      bottom = `
-        <div class="feedback ${checked}">${checked === 'ok' ? 'Верно!' : `Неверно — правильно: ${esc(item.id)}`}${rel}</div>
-        <button class="btn btn-primary" id="next">Следующая задача</button>`;
-    } else {
-      bottom = `<button class="btn btn-primary" id="answer" ${allFilled ? '' : 'disabled'}>Ответить</button>`;
-    }
-
-    $task.innerHTML = `
-      <div class="task-head">
-        <b>Задача #${st.answered + 1}</b>
-        <span class="st">${gapIdx.length > 1 ? `${gapIdx.length} пропуска` : '1 пропуск'}</span>
-        ${isRetry ? `<span class="round-pill">Повтор ошибок · круг ${st.round}</span>` : ''}
-      </div>
-      <p class="question">Вставьте пропущенную безударную гласную в корне.</p>
-      <div class="word">${word}</div>
-      ${checked ? '' : `<p class="choose">Выберите ответ:</p>
-      <div class="options">${opts.map((o, k) => `
-        <button class="opt ${fills[active] === o ? 'sel' : ''}" data-opt="${o}">${o}<span class="kbd">${k + 1}</span><span class="radio"></span></button>`).join('')}
-      </div>`}
-      <div class="answer-row">${bottom}</div>`;
-
-    $task.querySelectorAll('[data-opt]').forEach(b => b.onclick = () => choose(b.dataset.opt));
-    $task.querySelectorAll('[data-gap]').forEach(g => g.onclick = () => { if (!checked) { active = +g.dataset.gap; drawTask(); } });
-    const a = document.getElementById('answer'); if (a) a.onclick = check;
-    const n = document.getElementById('next'); if (n) { n.onclick = next; n.focus({ preventScroll: true }); }
-  }
-
-  function choose(letter) {
-    if (checked || active < 0 || paused) return;
-    fills[active] = letter;
-    // перейти к следующему незаполненному пропуску
-    const order = segs.map((x, i) => x.gap ? i : -1).filter(i => i >= 0);
-    const nextEmpty = order.find(i => i > active && !fills[i]) ?? order.find(i => !fills[i]);
-    if (nextEmpty !== undefined) active = nextEmpty;
-    drawTask();
-  }
-
-  function check() {
-    if (checked || paused) return;
-    const gaps = segs.map((x, i) => x.gap ? i : -1).filter(i => i >= 0);
-    if (!gaps.every(i => fills[i])) return;
-    const ok = gaps.every(i => fills[i] === segs[i].gap);
+  // Общая логика: записать результат ответа
+  function submit(ok) {
     checked = ok ? 'ok' : 'bad';
     const id = st.queue.shift();
     st.answered++;
     if (ok) st.done.push(id);
     else { st.retry.push(id); if (!st.wrong.includes(id)) st.wrong.push(id); }
     store.save();
-    drawTask(); updateSide();
-    if (ok) autoNext = setTimeout(next, 650);
+    updateSide();
   }
-
-  let autoNext = null;
   function next() {
     clearTimeout(autoNext); autoNext = null;
     if (!checked) return;
@@ -276,7 +236,13 @@ function renderPlay(q) {
     }
     loadItem();
   }
-
+  function loadItem() {
+    item = byId[st.queue[0]];
+    taskNo = st.answered + 1;
+    checked = null;
+    mode.load();
+    updateSide();
+  }
   function finish() {
     const attempt = { date: Date.now(), score: q.items.length - st.wrong.length, total: q.items.length, seconds: st.seconds, rounds: st.round, wrong: st.wrong.slice() };
     s.attempts.push(attempt);
@@ -284,6 +250,123 @@ function renderPlay(q) {
     store.save();
     go(`#/result/${q.id}`);
   }
+
+  /* ---------- режим «вставь букву» ---------- */
+  const letterMode = (() => {
+    let segs, fills, active;
+    const gapIdx = () => segs.map((x, i) => x.gap ? i : -1).filter(i => i >= 0);
+    function load() { segs = segments(item.pattern); fills = segs.map(() => null); active = segs.findIndex(x => x.gap); draw(); }
+    function draw() {
+      const gi = gapIdx();
+      const word = segs.map((x, i) => {
+        if (!x.gap) return esc(x.text);
+        let cls = 'gap', inner = fills[i] || '_';
+        if (checked) {
+          const ok = fills[i] === x.gap;
+          cls += ok ? ' ok' : ' bad';
+          if (!ok) inner = `${esc(fills[i])}<span class="fix">${esc(x.gap)}</span>`;
+        } else {
+          if (!fills[i]) cls += ' empty';
+          if (i === active) cls += ' active';
+        }
+        return `<span class="${cls}" data-gap="${i}">${inner}</span>`;
+      }).join('');
+      const opts = active >= 0 ? optionsFor(segs[active].gap) : [];
+      const allFilled = gi.every(i => fills[i]);
+      const bottom = checked
+        ? `<div class="feedback ${checked}">${checked === 'ok' ? 'Верно!' : `Неверно — правильно: ${esc(item.id)}`}${item.related ? `<span class="rel">${esc(item.related)}</span>` : ''}</div>
+           <button class="btn btn-primary" id="next">Следующая задача</button>`
+        : `<button class="btn btn-primary" id="answer" ${allFilled ? '' : 'disabled'}>Ответить</button>`;
+      $task.innerHTML = `
+        ${head(gi.length > 1 ? `${gi.length} пропуска` : '1 пропуск')}
+        <p class="question">Вставьте пропущенную безударную гласную в корне.</p>
+        <div class="word">${word}</div>
+        ${checked ? '' : `<p class="choose">Выберите ответ:</p>
+        <div class="options">${opts.map((o, k) => `
+          <button class="opt ${fills[active] === o ? 'sel' : ''}" data-opt="${o}">${o}<span class="kbd">${k + 1}</span><span class="radio"></span></button>`).join('')}
+        </div>`}
+        <div class="answer-row">${bottom}</div>`;
+      $task.querySelectorAll('[data-opt]').forEach(b => b.onclick = () => choose(b.dataset.opt));
+      $task.querySelectorAll('[data-gap]').forEach(g => g.onclick = () => { if (!checked) { active = +g.dataset.gap; draw(); } });
+      const a = document.getElementById('answer'); if (a) a.onclick = check;
+      const n = document.getElementById('next'); if (n) { n.onclick = next; n.focus({ preventScroll: true }); }
+    }
+    function choose(letter) {
+      if (checked || active < 0 || paused) return;
+      fills[active] = letter;
+      const order = gapIdx();
+      const nextEmpty = order.find(i => i > active && !fills[i]) ?? order.find(i => !fills[i]);
+      if (nextEmpty !== undefined) active = nextEmpty;
+      draw();
+    }
+    function check() {
+      if (checked || paused) return;
+      const gi = gapIdx();
+      if (!gi.every(i => fills[i])) return;
+      submit(gi.every(i => fills[i] === segs[i].gap));
+      draw();
+      if (checked === 'ok') autoNext = setTimeout(next, 650);
+    }
+    function key(e) {
+      if (e.key === 'Enter') { e.preventDefault(); checked ? next() : check(); return; }
+      if (checked) return;
+      const opts = active >= 0 ? optionsFor(segs[active].gap) : [];
+      let k = e.key.toLowerCase();
+      if (/^[1-9]$/.test(k) && opts[+k - 1]) return choose(opts[+k - 1]);
+      k = LAT[k] || k;
+      if (opts.includes(k)) choose(k);
+    }
+    return { load, key };
+  })();
+
+  /* ---------- режим «впиши термин» ---------- */
+  const inputMode = (() => {
+    let value = '', verdict = null;
+    function load() { value = ''; verdict = null; draw(); }
+    function draw() {
+      let fb = '';
+      if (checked) {
+        const yours = value.trim() ? `<span class="rel">Ваш ответ: ${esc(value.trim())}</span>` : '';
+        fb = checked === 'ok'
+          ? `<div class="feedback ok">${verdict === 'typo' ? `Засчитано (с опечаткой): <span class="term-answer">${esc(item.term)}</span>` : 'Верно!'}${verdict === 'typo' ? yours : ''}</div>`
+          : `<div class="feedback bad">Правильно: <span class="term-answer">${esc(item.term)}</span>${yours}</div>`;
+      }
+      $task.innerHTML = `
+        ${head(item.thesaurus ? 'Тезаурус' : '')}
+        <p class="question">Какой термин соответствует определению?</p>
+        <div class="definition">${esc(item.def)}</div>
+        <div class="term-input-wrap">
+          <input id="term" class="term-input ${checked || ''}" type="text" placeholder="Впишите термин" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="${checked ? 'next' : 'done'}" value="${esc(value)}" ${checked ? 'readonly' : ''}>
+        </div>
+        <div class="answer-row">
+          ${fb}
+          ${checked
+            ? `<button class="btn btn-primary" id="next">Следующая задача</button>`
+            : `<button class="btn btn-soft" id="dunno">Не знаю</button><button class="btn btn-primary" id="answer">Ответить</button>`}
+        </div>`;
+      const inp = document.getElementById('term');
+      inp.oninput = () => { value = inp.value; };
+      inp.focus({ preventScroll: true });
+      if (!checked) inp.setSelectionRange(value.length, value.length);
+      const a = document.getElementById('answer'); if (a) a.onclick = () => check(false);
+      const d = document.getElementById('dunno'); if (d) d.onclick = () => check(true);
+      const n = document.getElementById('next'); if (n) n.onclick = next;
+    }
+    function check(giveUp) {
+      if (checked || paused) return;
+      if (!giveUp && !value.trim()) { document.getElementById('term').focus(); return; }
+      verdict = giveUp ? null : matchTerm(value, item.answers);
+      submit(!!verdict);
+      draw();
+      if (verdict === 'exact') autoNext = setTimeout(next, 900);
+    }
+    function key(e) {
+      if (e.key === 'Enter') { e.preventDefault(); checked ? next() : check(false); }
+    }
+    return { load, key };
+  })();
+
+  const mode = q.type === 'input' ? inputMode : letterMode;
 
   // Таймер
   const tick = setInterval(() => {
@@ -308,7 +391,7 @@ function renderPlay(q) {
   }
   pauseBtn.onclick = () => setPaused(!paused);
 
-  // «Следующая задача» в боковой панели: до ответа — пропустить слово (уходит в конец круга без штрафа)
+  // «Следующая задача» в боковой панели: до ответа — отложить в конец круга без штрафа
   document.getElementById('skip').onclick = () => {
     if (checked) return next();
     if (paused) return;
@@ -320,13 +403,7 @@ function renderPlay(q) {
   const onKey = e => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (paused) { if (e.key === 'Escape' || e.key === ' ') { e.preventDefault(); setPaused(false); } return; }
-    if (e.key === 'Enter') { e.preventDefault(); checked ? next() : check(); return; }
-    if (checked) return;
-    const opts = active >= 0 ? optionsFor(segs[active].gap) : [];
-    let k = e.key.toLowerCase();
-    if (/^[1-9]$/.test(k) && opts[+k - 1]) return choose(opts[+k - 1]);
-    k = LAT[k] || k;
-    if (opts.includes(k)) choose(k);
+    mode.key(e);
   };
   document.addEventListener('keydown', onKey);
 
@@ -343,6 +420,7 @@ function renderResult(q) {
   const byId = Object.fromEntries(q.items.map(i => [i.id, i]));
   const pct = Math.round(a.score / a.total * 100);
   const msg = pct === 100 ? 'Идеально — всё с первого раза!' : pct >= 85 ? 'Отлично!' : pct >= 60 ? 'Хорошо, но есть над чем поработать.' : 'Стоит повторить ещё раз.';
+  const label = id => !byId[id] ? esc(id) : q.type === 'input' ? esc(byId[id].term) : pretty(byId[id].pattern);
   $app.innerHTML = `
     <div class="topbar"><h1>Квиз «${esc(q.title)}»</h1><a class="link" href="#/">Все квизы</a></div>
     <div class="card result">
@@ -350,7 +428,7 @@ function renderResult(q) {
       <div class="big">${a.score} <small>из ${a.total}</small></div>
       <p>${msg}<br>Время: ${fmtDur(a.seconds)} · Кругов: ${a.rounds}</p>
       ${a.wrong.length ? `<h3 class="section-title" style="margin-top:28px">Ошибки (${a.wrong.length})</h3>
-        <div class="mistakes">${a.wrong.map(id => `<span>${byId[id] ? pretty(byId[id].pattern) : esc(id)}</span>`).join('')}</div>` : ''}
+        <div class="mistakes">${a.wrong.map(id => `<span>${label(id)}</span>`).join('')}</div>` : ''}
       <div class="actions">
         <button class="btn btn-primary" data-restart>Пройти заново</button>
         <button class="btn btn-soft" data-go="#/quiz/${q.id}">К квизу</button>
